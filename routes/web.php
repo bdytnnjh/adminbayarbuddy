@@ -4,11 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TransactionController;
 use App\Services\FirestoreService;
 
-Route::get('/', function () {
-    return view('welcome');
-});
-
-Route::get('/transactions', [TransactionController::class, 'index'])->name('transactions.index');
+Route::get('/', [TransactionController::class, 'index'])->name('transactions.index');
 
 Route::get('/test-firestore', function (FirestoreService $firestore) {
     try {

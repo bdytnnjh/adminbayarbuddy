@@ -56,7 +56,7 @@ class TransactionController extends Controller
         }
 
         // Return full page for normal request
-        return view('transactions', [
+        return view('welcome', [
             'transactions' => $transactions,
             'currentStatus' => $status
         ]);
