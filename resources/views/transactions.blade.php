@@ -170,6 +170,12 @@
 
             <!-- Content Area -->
             <main class="flex-1 p-8">
+                @if (isset($error))
+                    <div class="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                        <p class="font-medium">{{ $error }}</p>
+                    </div>
+                @endif
+
                 <div class="bg-white rounded-xl shadow-sm">
                     <!-- Tabs -->
                     <div class="border-b border-gray-200 px-6">
@@ -212,98 +218,18 @@
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-200">
-                                @forelse($transactions as $transaction)
-                                    @php
-                                        $recipientName = $transaction['recipientName'] ?? 'Unknown';
-                                        $senderName = $transaction['senderName'] ?? 'Unknown';
-                                        $amount = $transaction['amount'] ?? 0;
-                                        $status = strtoupper($transaction['status'] ?? 'PENDING');
-                                        $recipientAcc = $transaction['recipientAcc'] ?? '';
-
-                                        // Format date
-                                        $createdAt = $transaction['createdAt'];
-                                        if ($createdAt instanceof \Google\Cloud\Core\Timestamp) {
-                                            $dateTime = $createdAt->get();
-                                        } else {
-                                            $dateTime = new DateTime();
-                                        }
-
-                                        // Get short ID (last 7 chars)
-                                        $shortId = substr($transaction['id'], -7);
-
-                                        // Status badge styling
-                                        $statusClass = match ($status) {
-                                            'SUCCESS' => 'border-green-300 text-green-700 bg-green-50',
-                                            'FAILED' => 'border-red-300 text-red-700 bg-white',
-                                            default => 'border-gray-300 text-gray-700 bg-white',
-                                        };
-
-                                        $statusLabel = match ($status) {
-                                            'SUCCESS' => 'Completed',
-                                            'FAILED' => 'Failed',
-                                            default => 'Pending',
-                                        };
-                                    @endphp
-                                    <tr class="hover:bg-gray-50 transition">
-                                        <td class="px-6 py-4">
-                                            <input type="checkbox"
-                                                class="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500">
-                                        </td>
-                                        <td class="px-6 py-4 text-sm font-medium text-gray-900">#{{ $shortId }}
-                                        </td>
-                                        <td class="px-6 py-4 text-sm text-gray-600">
-                                            {{ $dateTime->format('F j, Y, h:i A') }}</td>
-                                        <td class="px-6 py-4">
-                                            <div class="flex items-center gap-3">
-                                                <img src="https://ui-avatars.com/api/?name={{ urlencode($recipientName) }}&background=random&color=fff"
-                                                    alt="{{ $recipientName }}" class="w-8 h-8 rounded-full">
-                                                <div class="flex flex-col">
-                                                    <span
-                                                        class="text-sm font-medium text-gray-900">{{ $recipientName }}</span>
-                                                    <span class="text-xs text-gray-500">{{ $recipientAcc }}</span>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="px-6 py-4 text-sm font-medium text-gray-900">RM
-                                            {{ number_format($amount, 2) }}</td>
-                                        <td class="px-6 py-4 text-sm text-gray-600">Transfer</td>
-                                        <td class="px-6 py-4">
-                                            <span
-                                                class="inline-flex px-4 py-1.5 rounded-full text-sm font-medium border {{ $statusClass }}">
-                                                {{ $statusLabel }}
-                                            </span>
-                                        </td>
-                                        <td class="px-6 py-4">
-                                            <button class="text-gray-400 hover:text-gray-600">
-                                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path
-                                                        d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
-                                                </svg>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr>
-                                        <td colspan="8" class="px-6 py-12 text-center">
-                                            <div class="flex flex-col items-center justify-center">
-                                                <svg class="w-16 h-16 text-gray-300 mb-4" fill="none"
-                                                    stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                                        stroke-width="2"
-                                                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                </svg>
-                                                <p class="text-gray-500 text-lg font-medium">No transactions found</p>
-                                                <p class="text-gray-400 text-sm mt-1">Try adjusting your filters</p>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                @endforelse
+                                @include('partials.transaction-rows', ['transactions' => $transactions])
                             </tbody>
                         </table>
                     </div>
 
                     <!-- Footer with See More -->
-                    <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
+                    <div class="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span class="text-sm text-gray-600">Live updates active</span>
+                            <span id="last-update" class="text-xs text-gray-400"></span>
+                        </div>
                         <button class="text-purple-600 hover:text-purple-700 font-semibold text-sm">
                             See more
                         </button>
@@ -312,6 +238,120 @@
             </main>
         </div>
     </div>
+
+    <script>
+        let lastUpdateTime = null;
+        let currentStatus = '{{ $currentStatus }}';
+
+        // Function to update the transactions table
+        async function updateTransactions() {
+            try {
+                const response = await fetch(
+                    `{{ route('transactions.index') }}?status=${currentStatus}&ajax=1&_t=${Date.now()}`, {
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Accept': 'text/html',
+                            'Cache-Control': 'no-cache, no-store, must-revalidate',
+                            'Pragma': 'no-cache'
+                        },
+                        cache: 'no-store'
+                    });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const html = await response.text();
+
+                // Log untuk debugging
+                console.log('📦 Response received:', {
+                    length: html.length,
+                    firstChars: html.substring(0, 100),
+                    timestamp: new Date().toISOString()
+                });
+
+                const currentTbody = document.querySelector('tbody');
+
+                if (currentTbody) {
+                    // Normalize whitespace untuk comparison
+                    const normalizedNew = html.trim().replace(/\s+/g, ' ');
+                    const normalizedCurrent = currentTbody.innerHTML.trim().replace(/\s+/g, ' ');
+
+                    console.log('🔍 Comparing:', {
+                        newLength: normalizedNew.length,
+                        currentLength: normalizedCurrent.length,
+                        areDifferent: normalizedNew !== normalizedCurrent
+                    });
+
+                    // Selalu update jika ada perbedaan
+                    if (normalizedNew !== normalizedCurrent) {
+                        // Add fade effect
+                        currentTbody.style.transition = 'opacity 0.2s';
+                        currentTbody.style.opacity = '0.5';
+
+                        setTimeout(() => {
+                            currentTbody.innerHTML = html;
+                            currentTbody.style.opacity = '1';
+                            console.log('✅ Transactions updated - new data detected');
+                        }, 200);
+                    } else {
+                        console.log('⏭️ No changes detected');
+                    }
+                }
+
+                // Update last update time
+                lastUpdateTime = new Date();
+                updateLastUpdateText();
+
+            } catch (error) {
+                console.error('❌ Error updating transactions:', error);
+                // Show error indicator
+                const lastUpdateEl = document.getElementById('last-update');
+                if (lastUpdateEl) {
+                    lastUpdateEl.textContent = '⚠️ Update failed';
+                    lastUpdateEl.classList.add('text-red-500');
+                }
+            }
+        }
+
+        // Function to update the "last update" text
+        function updateLastUpdateText() {
+            const lastUpdateEl = document.getElementById('last-update');
+            if (lastUpdateTime && lastUpdateEl) {
+                lastUpdateEl.classList.remove('text-red-500');
+                const seconds = Math.floor((new Date() - lastUpdateTime) / 1000);
+                if (seconds < 60) {
+                    lastUpdateEl.textContent = `Updated ${seconds}s ago`;
+                } else {
+                    lastUpdateEl.textContent = `Updated ${Math.floor(seconds / 60)}m ago`;
+                }
+            }
+        }
+
+        // Poll for updates every 3 seconds
+        const pollInterval = setInterval(updateTransactions, 3000);
+
+        // Update the "ago" text every second
+        const textInterval = setInterval(updateLastUpdateText, 1000);
+
+        // Initial update
+        console.log('🚀 Starting real-time updates...');
+        updateTransactions();
+
+        // Listen for visibility change to pause/resume when tab is not active
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                console.log('👀 Tab active - fetching latest data');
+                updateTransactions();
+            }
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            clearInterval(pollInterval);
+            clearInterval(textInterval);
+        });
+    </script>
 </body>
 
 </html>

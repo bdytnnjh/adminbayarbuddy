@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use App\Services\FirestoreService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -11,7 +12,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Ensure every type-hint for FirestoreService resolves to the same wrapper
+        $this->app->singleton(FirestoreService::class, function () {
+            return new FirestoreService();
+        });
     }
 
     /**

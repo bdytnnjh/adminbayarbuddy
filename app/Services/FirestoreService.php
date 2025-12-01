@@ -2,27 +2,122 @@
 
 namespace App\Services;
 
-use Google\Cloud\Firestore\FirestoreClient;
-use Google\Cloud\Firestore\Query;
+use Google\Auth\Credentials\ServiceAccountCredentials;
 
 class FirestoreService
 {
-    protected $db;
+    private $credentials;
+    private $projectId;
+    private $httpClient;
 
     public function __construct()
     {
-        // Pastikan file JSON ada di storage/app/firebase_credentials.json
-        $keyPath = storage_path('app/firebase_credentials.json');
+        try {
+            $keyPath = storage_path('app/firebase_credentials.json');
 
-        if (!file_exists($keyPath)) {
-            throw new \Exception("File kredensial Firebase tidak ditemukan di: " . $keyPath);
+            if (!file_exists($keyPath)) {
+                \Log::error("File kredensial Firebase tidak ditemukan di: " . $keyPath);
+                $this->credentials = null;
+                return;
+            }
+
+            $jsonKey = json_decode(file_get_contents($keyPath), true);
+            if (!is_array($jsonKey) || ($jsonKey['type'] ?? null) !== 'service_account') {
+                \Log::error('Konfigurasi kredensial Firebase tidak valid atau bukan service_account.');
+                $this->credentials = null;
+                return;
+            }
+
+            $this->credentials = $jsonKey;
+            $this->projectId = $jsonKey['project_id'] ?? env('FIREBASE_PROJECT_ID');
+            $this->httpClient = new \GuzzleHttp\Client(['timeout' => 30]);
+
+            \Log::info('FirestoreService initialized successfully for project: ' . $this->projectId);
+        } catch (\Throwable $e) {
+            \Log::error('FirestoreService initialization failed: ' . $e->getMessage());
+            $this->credentials = null;
         }
+    }
 
-        $this->db = new FirestoreClient([
-            'keyFilePath' => $keyPath,
-            // Project ID opsional jika sudah ada di dalam JSON, tapi aman jika didefine
-            // 'projectId' => env('FIREBASE_PROJECT_ID'), 
-        ]);
+    /**
+     * Get access token for Firebase authentication
+     */
+    private function getAuthToken()
+    {
+        $scopes = ['https://www.googleapis.com/auth/cloud-platform'];
+        $credentialsFetcher = new ServiceAccountCredentials($scopes, $this->credentials);
+        return $credentialsFetcher->fetchAuthToken();
+    }
+
+    /**
+     * Parse Firestore field value to PHP native type
+     */
+    private function parseFieldValue($value)
+    {
+        if (isset($value['stringValue'])) {
+            return $value['stringValue'];
+        } elseif (isset($value['integerValue'])) {
+            return (int) $value['integerValue'];
+        } elseif (isset($value['doubleValue'])) {
+            return (float) $value['doubleValue'];
+        } elseif (isset($value['booleanValue'])) {
+            return $value['booleanValue'];
+        } elseif (isset($value['timestampValue'])) {
+            return $value['timestampValue'];
+        } elseif (isset($value['nullValue'])) {
+            return null;
+        } elseif (isset($value['arrayValue']['values'])) {
+            $array = [];
+            foreach ($value['arrayValue']['values'] as $item) {
+                $array[] = $this->parseFieldValue($item);
+            }
+            return $array;
+        } elseif (isset($value['mapValue']['fields'])) {
+            $map = [];
+            foreach ($value['mapValue']['fields'] as $key => $val) {
+                $map[$key] = $this->parseFieldValue($val);
+            }
+            return $map;
+        }
+        return $value;
+    }
+
+    /**
+     * Convert PHP value to Firestore field format
+     */
+    private function toFirestoreValue($value)
+    {
+        if (is_string($value)) {
+            return ['stringValue' => $value];
+        } elseif (is_int($value)) {
+            return ['integerValue' => (string) $value];
+        } elseif (is_float($value)) {
+            return ['doubleValue' => $value];
+        } elseif (is_bool($value)) {
+            return ['booleanValue' => $value];
+        } elseif (is_null($value)) {
+            return ['nullValue' => null];
+        } elseif ($value instanceof \DateTime) {
+            return ['timestampValue' => $value->format('Y-m-d\TH:i:s\Z')];
+        } elseif (is_array($value)) {
+            // Check if it's associative array (map) or indexed array
+            if (array_keys($value) !== range(0, count($value) - 1)) {
+                // Associative array - treat as map
+                $fields = [];
+                foreach ($value as $k => $v) {
+                    $fields[$k] = $this->toFirestoreValue($v);
+                }
+                return ['mapValue' => ['fields' => $fields]];
+            } else {
+                // Indexed array
+                $values = [];
+                foreach ($value as $v) {
+                    $values[] = $this->toFirestoreValue($v);
+                }
+                return ['arrayValue' => ['values' => $values]];
+            }
+        }
+        return ['stringValue' => (string) $value];
     }
 
     /**
@@ -30,14 +125,34 @@ class FirestoreService
      */
     public function find(string $collection, string $id)
     {
-        $docRef = $this->db->collection($collection)->document($id);
-        $snapshot = $docRef->snapshot();
-
-        if ($snapshot->exists()) {
-            return array_merge(['id' => $snapshot->id()], $snapshot->data());
+        if (!$this->credentials) {
+            return null;
         }
 
-        return null;
+        try {
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}/{$id}";
+
+            $response = $this->httpClient->get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Accept' => 'application/json',
+                ]
+            ]);
+
+            $doc = json_decode($response->getBody()->getContents(), true);
+            $fields = $doc['fields'] ?? [];
+
+            $item = ['id' => $id];
+            foreach ($fields as $key => $value) {
+                $item[$key] = $this->parseFieldValue($value);
+            }
+
+            return $item;
+        } catch (\Throwable $e) {
+            \Log::error('Error finding document: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
@@ -45,39 +160,154 @@ class FirestoreService
      */
     public function all(string $collection)
     {
-        $docs = $this->db->collection($collection)->documents();
-        return $this->transformDocuments($docs);
+        if (!$this->credentials) {
+            \Log::warning('Firestore credentials not initialized, returning empty collection');
+            return collect([]);
+        }
+
+        try {
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}";
+
+            $response = $this->httpClient->get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Accept' => 'application/json',
+                ]
+            ]);
+
+            $data = json_decode($response->getBody()->getContents(), true);
+            $results = [];
+
+            if (isset($data['documents'])) {
+                foreach ($data['documents'] as $doc) {
+                    $id = basename($doc['name']);
+                    $fields = $doc['fields'] ?? [];
+
+                    $item = ['id' => $id];
+                    foreach ($fields as $key => $value) {
+                        $item[$key] = $this->parseFieldValue($value);
+                    }
+                    $results[] = $item;
+                }
+            }
+
+            return collect($results);
+
+        } catch (\Throwable $e) {
+            \Log::error('Error fetching documents from collection ' . $collection . ': ' . $e->getMessage());
+            return collect([]);
+        }
     }
 
     /**
      * Query Fleksibel dengan Where, OrderBy, dan Limit
-     * * Contoh penggunaan:
+     * Contoh penggunaan:
      * $filters = [
-     * ['status', '=', 'active'],
-     * ['umur', '>', 20]
+     *   ['status', '=', 'active'],
+     *   ['age', '>', 20]
      * ];
      */
     public function query(string $collection, array $filters = [], string $orderBy = null, string $direction = 'DESC', int $limit = 0)
     {
-        $query = $this->db->collection($collection);
-
-        // Terapkan Filter (Where)
-        foreach ($filters as $filter) {
-            // $filter[0] = field, $filter[1] = operator, $filter[2] = value
-            $query = $query->where($filter[0], $filter[1], $filter[2]);
+        if (!$this->credentials) {
+            \Log::warning('Firestore credentials not initialized, returning empty collection');
+            return collect([]);
         }
 
-        // Terapkan Order By
-        if ($orderBy) {
-            $query = $query->orderBy($orderBy, $direction);
-        }
+        try {
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents:runQuery";
 
-        // Terapkan Limit
-        if ($limit > 0) {
-            $query = $query->limit($limit);
-        }
+            // Build structured query
+            $structuredQuery = [
+                'from' => [['collectionId' => $collection]]
+            ];
 
-        return $this->transformDocuments($query->documents());
+            // Add filters
+            if (!empty($filters)) {
+                $compositeFilter = ['filters' => []];
+                foreach ($filters as $filter) {
+                    $field = $filter[0];
+                    $op = $filter[1];
+                    $value = $filter[2];
+
+                    // Map operator
+                    $opMap = [
+                        '=' => 'EQUAL',
+                        '!=' => 'NOT_EQUAL',
+                        '<' => 'LESS_THAN',
+                        '<=' => 'LESS_THAN_OR_EQUAL',
+                        '>' => 'GREATER_THAN',
+                        '>=' => 'GREATER_THAN_OR_EQUAL',
+                        'array-contains' => 'ARRAY_CONTAINS',
+                        'in' => 'IN',
+                    ];
+
+                    $compositeFilter['filters'][] = [
+                        'fieldFilter' => [
+                            'field' => ['fieldPath' => $field],
+                            'op' => $opMap[$op] ?? 'EQUAL',
+                            'value' => $this->toFirestoreValue($value)
+                        ]
+                    ];
+                }
+
+                if (count($compositeFilter['filters']) > 1) {
+                    $structuredQuery['where'] = ['compositeFilter' => ['op' => 'AND'] + $compositeFilter];
+                } else {
+                    $structuredQuery['where'] = $compositeFilter['filters'][0];
+                }
+            }
+
+            // Add order by
+            if ($orderBy) {
+                $structuredQuery['orderBy'] = [
+                    [
+                        'field' => ['fieldPath' => $orderBy],
+                        'direction' => $direction === 'ASC' ? 'ASCENDING' : 'DESCENDING'
+                    ]
+                ];
+            }
+
+            // Add limit
+            if ($limit > 0) {
+                $structuredQuery['limit'] = $limit;
+            }
+
+            $response = $this->httpClient->post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => ['structuredQuery' => $structuredQuery]
+            ]);
+
+            $data = json_decode($response->getBody()->getContents(), true);
+            $results = [];
+
+            if (is_array($data)) {
+                foreach ($data as $item) {
+                    if (isset($item['document'])) {
+                        $doc = $item['document'];
+                        $id = basename($doc['name']);
+                        $fields = $doc['fields'] ?? [];
+
+                        $result = ['id' => $id];
+                        foreach ($fields as $key => $value) {
+                            $result[$key] = $this->parseFieldValue($value);
+                        }
+                        $results[] = $result;
+                    }
+                }
+            }
+
+            return collect($results);
+
+        } catch (\Throwable $e) {
+            \Log::error('Error querying collection ' . $collection . ': ' . $e->getMessage());
+            return collect([]);
+        }
     }
 
     /**
@@ -85,12 +315,39 @@ class FirestoreService
      */
     public function create(string $collection, array $data)
     {
-        // Tambahkan timestamp manual karena Firestore tidak otomatis seperti MySQL
-        $data['created_at'] = new \DateTime();
-        $data['updated_at'] = new \DateTime();
+        if (!$this->credentials) {
+            return null;
+        }
 
-        $ref = $this->db->collection($collection)->add($data);
-        return $ref->id(); // Mengembalikan ID baru
+        try {
+            // Tambahkan timestamp manual
+            $data['created_at'] = new \DateTime();
+            $data['updated_at'] = new \DateTime();
+
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}";
+
+            // Convert data to Firestore format
+            $fields = [];
+            foreach ($data as $key => $value) {
+                $fields[$key] = $this->toFirestoreValue($value);
+            }
+
+            $response = $this->httpClient->post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => ['fields' => $fields]
+            ]);
+
+            $result = json_decode($response->getBody()->getContents(), true);
+            return basename($result['name'] ?? '');
+
+        } catch (\Throwable $e) {
+            \Log::error('Error creating document: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
@@ -98,9 +355,36 @@ class FirestoreService
      */
     public function set(string $collection, string $id, array $data)
     {
-        $data['updated_at'] = new \DateTime();
-        $this->db->collection($collection)->document($id)->set($data, ['merge' => true]);
-        return $id;
+        if (!$this->credentials) {
+            return null;
+        }
+
+        try {
+            $data['updated_at'] = new \DateTime();
+
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}/{$id}";
+
+            // Convert data to Firestore format
+            $fields = [];
+            foreach ($data as $key => $value) {
+                $fields[$key] = $this->toFirestoreValue($value);
+            }
+
+            $response = $this->httpClient->patch($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => ['fields' => $fields]
+            ]);
+
+            return $id;
+
+        } catch (\Throwable $e) {
+            \Log::error('Error setting document: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
@@ -108,17 +392,43 @@ class FirestoreService
      */
     public function update(string $collection, string $id, array $data)
     {
-        $docRef = $this->db->collection($collection)->document($id);
-
-        // Format update Firestore butuh struktur ['path' => 'field', 'value' => 'val']
-        $updates = [];
-        foreach ($data as $key => $val) {
-            $updates[] = ['path' => $key, 'value' => $val];
+        if (!$this->credentials) {
+            return false;
         }
-        $updates[] = ['path' => 'updated_at', 'value' => new \DateTime()];
 
-        $docRef->update($updates);
-        return true;
+        try {
+            $data['updated_at'] = new \DateTime();
+
+            $authToken = $this->getAuthToken();
+
+            // Build update mask (field paths to update)
+            $updateMask = [];
+            foreach (array_keys($data) as $key) {
+                $updateMask[] = $key;
+            }
+
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}/{$id}?updateMask.fieldPaths=" . implode('&updateMask.fieldPaths=', $updateMask);
+
+            // Convert data to Firestore format
+            $fields = [];
+            foreach ($data as $key => $value) {
+                $fields[$key] = $this->toFirestoreValue($value);
+            }
+
+            $response = $this->httpClient->patch($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => ['fields' => $fields]
+            ]);
+
+            return true;
+
+        } catch (\Throwable $e) {
+            \Log::error('Error updating document: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**
@@ -126,21 +436,25 @@ class FirestoreService
      */
     public function delete(string $collection, string $id)
     {
-        $this->db->collection($collection)->document($id)->delete();
-        return true;
-    }
-
-    /**
-     * Helper internal untuk mengubah Object Firestore jadi Array bersih
-     */
-    protected function transformDocuments($documents)
-    {
-        $results = [];
-        foreach ($documents as $document) {
-            if ($document->exists()) {
-                $results[] = array_merge(['id' => $document->id()], $document->data());
-            }
+        if (!$this->credentials) {
+            return false;
         }
-        return collect($results); // Return sebagai Laravel Collection biar enak di-loop
+
+        try {
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents/{$collection}/{$id}";
+
+            $this->httpClient->delete($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                ]
+            ]);
+
+            return true;
+
+        } catch (\Throwable $e) {
+            \Log::error('Error deleting document: ' . $e->getMessage());
+            return false;
+        }
     }
 }

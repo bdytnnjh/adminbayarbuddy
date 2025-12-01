@@ -36,6 +36,26 @@ class TransactionController extends Controller
             100 // Limit 100 transaksi
         );
 
+        // Log untuk debugging
+        \Log::info('Transaction query', [
+            'status' => $status,
+            'count' => $transactions->count(),
+            'is_ajax' => $request->ajax() || $request->has('ajax')
+        ]);
+
+        // If AJAX request, return only the table rows
+        if ($request->ajax() || $request->has('ajax')) {
+            $html = view('partials.transaction-rows', [
+                'transactions' => $transactions
+            ])->render();
+
+            return response($html, 200, [
+                'Content-Type' => 'text/html; charset=UTF-8',
+                'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            ]);
+        }
+
+        // Return full page for normal request
         return view('transactions', [
             'transactions' => $transactions,
             'currentStatus' => $status
