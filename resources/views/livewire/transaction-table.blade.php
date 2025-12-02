@@ -1,4 +1,5 @@
-<div wire:poll.3s>
+<div>
+    {{-- wire:poll.3s disabled temporarily to save quota --}}
     <div class="bg-white rounded-xl shadow-sm">
         <!-- Tabs -->
         <div class="border-b border-gray-200 px-6">
@@ -156,12 +157,11 @@
         <!-- Footer -->
         <div class="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
             <div class="flex items-center gap-2">
-                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span class="text-sm text-gray-600">Live updates active</span>
-                <span class="text-xs text-gray-400" wire:loading.remove>Auto-refresh every 3s</span>
-                <span class="text-xs text-purple-600" wire:loading>
-                    Updating...
-                </span>
+                <span class="text-sm text-gray-600">Auto-refresh disabled</span>
+                <button wire:click="$refresh" class="text-purple-600 hover:text-purple-700 text-sm font-medium">
+                    <span wire:loading.remove>🔄 Refresh manually</span>
+                    <span wire:loading>Updating...</span>
+                </button>
             </div>
             <button class="text-purple-600 hover:text-purple-700 font-semibold text-sm">
                 See more
