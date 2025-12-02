@@ -226,7 +226,7 @@ class FirestoreService
 
             // Add filters
             if (!empty($filters)) {
-                $compositeFilter = ['filters' => []];
+                $filterClauses = [];
                 foreach ($filters as $filter) {
                     $field = $filter[0];
                     $op = $filter[1];
@@ -235,6 +235,7 @@ class FirestoreService
                     // Map operator
                     $opMap = [
                         '=' => 'EQUAL',
+                        '==' => 'EQUAL',
                         '!=' => 'NOT_EQUAL',
                         '<' => 'LESS_THAN',
                         '<=' => 'LESS_THAN_OR_EQUAL',
@@ -244,7 +245,7 @@ class FirestoreService
                         'in' => 'IN',
                     ];
 
-                    $compositeFilter['filters'][] = [
+                    $filterClauses[] = [
                         'fieldFilter' => [
                             'field' => ['fieldPath' => $field],
                             'op' => $opMap[$op] ?? 'EQUAL',
@@ -253,14 +254,116 @@ class FirestoreService
                     ];
                 }
 
-                if (count($compositeFilter['filters']) > 1) {
-                    $structuredQuery['where'] = ['compositeFilter' => ['op' => 'AND'] + $compositeFilter];
+                if (count($filterClauses) > 1) {
+                    $structuredQuery['where'] = [
+                        'compositeFilter' => [
+                            'op' => 'AND',
+                            'filters' => $filterClauses
+                        ]
+                    ];
                 } else {
-                    $structuredQuery['where'] = $compositeFilter['filters'][0];
+                    $structuredQuery['where'] = $filterClauses[0];
                 }
             }
 
-            // Add order by
+            // Add order by - jika ada filter equality, harus include field filter juga di orderBy
+            if ($orderBy) {
+                $orderByFields = [];
+
+                // Untuk filter equality pada field yang berbeda dari orderBy, 
+                // Firestore membutuhkan composite index
+                $orderByFields[] = [
+                    'field' => ['fieldPath' => $orderBy],
+                    'direction' => $direction === 'ASC' ? 'ASCENDING' : 'DESCENDING'
+                ];
+
+                $structuredQuery['orderBy'] = $orderByFields;
+            }
+
+            // Add limit
+            if ($limit > 0) {
+                $structuredQuery['limit'] = $limit;
+            }
+
+            // Log query untuk debugging
+            \Log::info('Firestore query', [
+                'collection' => $collection,
+                'filters' => $filters,
+                'orderBy' => $orderBy,
+                'query' => json_encode($structuredQuery)
+            ]);
+
+            $response = $this->httpClient->post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $authToken['access_token'],
+                    'Content-Type' => 'application/json',
+                ],
+                'json' => ['structuredQuery' => $structuredQuery]
+            ]);
+
+            $data = json_decode($response->getBody()->getContents(), true);
+
+            // Log response untuk debugging
+            \Log::info('Firestore response', [
+                'collection' => $collection,
+                'documentCount' => is_array($data) ? count($data) : 0,
+                'hasDocuments' => isset($data[0]['document'])
+            ]);
+
+            $results = [];
+
+            if (is_array($data)) {
+                foreach ($data as $item) {
+                    if (isset($item['document'])) {
+                        $doc = $item['document'];
+                        $id = basename($doc['name']);
+                        $fields = $doc['fields'] ?? [];
+
+                        $result = ['id' => $id];
+                        foreach ($fields as $key => $value) {
+                            $result[$key] = $this->parseFieldValue($value);
+                        }
+                        $results[] = $result;
+                    }
+                }
+            }
+
+            \Log::info('Firestore results parsed', ['count' => count($results)]);
+
+            return collect($results);
+
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            $responseBody = $e->getResponse()->getBody()->getContents();
+            \Log::error('Firestore query error (ClientException): ' . $responseBody);
+
+            // Check if it's an index error
+            if (str_contains($responseBody, 'index')) {
+                \Log::warning('Firestore requires a composite index. Falling back to client-side filtering.');
+                return $this->queryWithClientSideFiltering($collection, $filters, $orderBy, $direction, $limit);
+            }
+
+            return collect([]);
+        } catch (\Throwable $e) {
+            \Log::error('Error querying collection ' . $collection . ': ' . $e->getMessage());
+            return collect([]);
+        }
+    }
+
+    /**
+     * Fallback: Query without server-side filter, then filter on client side
+     */
+    private function queryWithClientSideFiltering(string $collection, array $filters = [], string $orderBy = null, string $direction = 'DESC', int $limit = 0)
+    {
+        try {
+            $authToken = $this->getAuthToken();
+            $url = "https://firestore.googleapis.com/v1/projects/{$this->projectId}/databases/(default)/documents:runQuery";
+
+            // Query tanpa filter
+            $structuredQuery = [
+                'from' => [['collectionId' => $collection]]
+            ];
+
+            // Jika bisa orderBy tanpa filter
             if ($orderBy) {
                 $structuredQuery['orderBy'] = [
                     [
@@ -268,11 +371,6 @@ class FirestoreService
                         'direction' => $direction === 'ASC' ? 'ASCENDING' : 'DESCENDING'
                     ]
                 ];
-            }
-
-            // Add limit
-            if ($limit > 0) {
-                $structuredQuery['limit'] = $limit;
             }
 
             $response = $this->httpClient->post($url, [
@@ -302,10 +400,40 @@ class FirestoreService
                 }
             }
 
-            return collect($results);
+            $collection = collect($results);
+
+            // Apply client-side filtering
+            foreach ($filters as $filter) {
+                $field = $filter[0];
+                $op = $filter[1];
+                $value = $filter[2];
+
+                $collection = $collection->filter(function ($item) use ($field, $op, $value) {
+                    $itemValue = $item[$field] ?? null;
+
+                    return match ($op) {
+                        '=', '==' => $itemValue === $value,
+                        '!=' => $itemValue !== $value,
+                        '<' => $itemValue < $value,
+                        '<=' => $itemValue <= $value,
+                        '>' => $itemValue > $value,
+                        '>=' => $itemValue >= $value,
+                        default => true,
+                    };
+                });
+            }
+
+            // Apply limit
+            if ($limit > 0) {
+                $collection = $collection->take($limit);
+            }
+
+            \Log::info('Client-side filtering results', ['count' => $collection->count()]);
+
+            return $collection->values();
 
         } catch (\Throwable $e) {
-            \Log::error('Error querying collection ' . $collection . ': ' . $e->getMessage());
+            \Log::error('Error in client-side filtering: ' . $e->getMessage());
             return collect([]);
         }
     }

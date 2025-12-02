@@ -1,0 +1,46 @@
+# Caddyfile for FrankenPHP and Laravel
+
+{
+	# Global options - these apply to all sites
+	log {
+		output stderr
+		format console
+		level  INFO
+	}
+
+	# Perintahkan Caddy untuk memproses PHP sebelum mencoba melayani file statis.
+	# Ini sangat penting untuk pola front-controller (index.php) Laravel.
+	order php_server before file_server
+}
+
+# Server block utama yang mendengarkan di port 80
+:80 {
+	# Atur document root ke direktori public Laravel
+	root * /app/public
+
+	# Aktifkan kompresi untuk performa yang lebih baik
+	encode zstd gzip
+
+	# Aturan penulisan ulang URL (URL Rewrite) untuk pola front-controller.
+	# Jika file yang diminta tidak ada, alihkan permintaan ke index.php.
+	# Ini adalah cara standar dan paling efisien di Caddy v2.
+	try_files {path} /index.php?{query}
+
+	# Jalankan aplikasi PHP menggunakan mode worker FrankenPHP yang berkinerja tinggi.
+	# Directive 'php_server' sudah mencakup semua yang dibutuhkan untuk eksekusi PHP.
+	php_server
+
+	# Tambahkan header keamanan yang penting
+	header {
+		# Menghapus tanda pengenal server (Server signature)
+		-Server
+		# Mencegah browser dari MIME-sniffing
+		X-Content-Type-Options nosniff
+		# Mencegah clickjacking
+		X-Frame-Options DENY
+		# Force HTTPS
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# CSP untuk mencegah mixed content
+		Content-Security-Policy "upgrade-insecure-requests"
+	}
+}

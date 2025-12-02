@@ -20,14 +20,18 @@
         // Status badge styling
         $statusClass = match ($status) {
             'SUCCESS' => 'border-green-300 text-green-700 bg-green-50',
-            'FAILED' => 'border-red-300 text-red-700 bg-white',
-            default => 'border-gray-300 text-gray-700 bg-white',
+            'FAILED' => 'border-red-300 text-red-700 bg-red-50',
+            'REJECTED' => 'border-orange-300 text-orange-700 bg-orange-50',
+            'PENDING_APPROVAL' => 'border-yellow-300 text-yellow-700 bg-yellow-50',
+            default => 'border-gray-300 text-gray-700 bg-gray-50',
         };
 
         $statusLabel = match ($status) {
-            'SUCCESS' => 'Completed',
+            'SUCCESS' => 'Success',
             'FAILED' => 'Failed',
-            default => 'Pending',
+            'REJECTED' => 'Rejected',
+            'PENDING_APPROVAL' => 'Pending Approval',
+            default => ucfirst(strtolower(str_replace('_', ' ', $status))),
         };
     @endphp
     <tr class="hover:bg-gray-50 transition">

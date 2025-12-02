@@ -1,0 +1,58 @@
+# Build artifacts and hot reload
+public/hot
+public/build
+
+# Git and development files
+.git
+.gitignore
+README.md
+*.md
+
+# Docker files (not needed in image)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Environment files
+.env
+.env.example
+.env.local
+.env.development
+.env.test
+
+# Dependencies (installed during build)
+/vendor
+/node_modules
+package-lock.json
+
+# Laravel cache and storage
+/storage/logs
+/storage/framework/sessions
+/storage/framework/cache
+/storage/framework/views
+/bootstrap/cache
+/public/storage
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test files and CI/CD
+tests/
+phpunit.xml
+coverage/
+.github/
+Jenkinsfile
+
+# Development tools
+.phpcs.xml
+.phpmd.xml
+.editorconfig
+
+# Logs
+*.log
+logs/

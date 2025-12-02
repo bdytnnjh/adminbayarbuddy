@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BayarBuddy - Transactions</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
+    @livewireStyles
 </head>
 
 <body class="bg-gray-50 font-sans">
@@ -176,182 +177,12 @@
                     </div>
                 @endif
 
-                <div class="bg-white rounded-xl shadow-sm">
-                    <!-- Tabs -->
-                    <div class="border-b border-gray-200 px-6">
-                        <div class="flex gap-8">
-                            <a href="{{ route('transactions.index', ['status' => 'all']) }}"
-                                class="px-1 py-4 {{ $currentStatus === 'all' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700' }} font-semibold">
-                                All Transactions
-                            </a>
-                            <a href="{{ route('transactions.index', ['status' => 'success']) }}"
-                                class="px-1 py-4 {{ $currentStatus === 'success' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700' }} font-semibold">
-                                Completed
-                            </a>
-                            <a href="{{ route('transactions.index', ['status' => 'failed']) }}"
-                                class="px-1 py-4 {{ $currentStatus === 'failed' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700' }} font-semibold">
-                                Failed
-                            </a>
-                            <a href="{{ route('transactions.index', ['status' => 'pending']) }}"
-                                class="px-1 py-4 {{ $currentStatus === 'pending' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:text-gray-700' }} font-semibold">
-                                Pending
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- Table -->
-                    <div class="overflow-x-auto">
-                        <table class="w-full">
-                            <thead>
-                                <tr class="border-b border-gray-200">
-                                    <th class="px-6 py-4 text-left">
-                                        <input type="checkbox"
-                                            class="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500">
-                                    </th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">ID Invoice</th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">Date</th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">Recipient</th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">Amount</th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">Type</th>
-                                    <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700">Status</th>
-                                    <th class="px-6 py-4"></th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-200">
-                                @include('partials.transaction-rows', ['transactions' => $transactions])
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <!-- Footer with See More -->
-                    <div class="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
-                        <div class="flex items-center gap-2">
-                            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                            <span class="text-sm text-gray-600">Live updates active</span>
-                            <span id="last-update" class="text-xs text-gray-400"></span>
-                        </div>
-                        <button class="text-purple-600 hover:text-purple-700 font-semibold text-sm">
-                            See more
-                        </button>
-                    </div>
-                </div>
+                <livewire:transaction-table :status="$currentStatus" />
             </main>
         </div>
     </div>
 
-    <script>
-        let lastUpdateTime = null;
-        let currentStatus = '{{ $currentStatus }}';
-
-        // Function to update the transactions table
-        async function updateTransactions() {
-            try {
-                const response = await fetch(
-                    `{{ route('transactions.index') }}?status=${currentStatus}&ajax=1&_t=${Date.now()}`, {
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'text/html',
-                            'Cache-Control': 'no-cache, no-store, must-revalidate',
-                            'Pragma': 'no-cache'
-                        },
-                        cache: 'no-store'
-                    });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const html = await response.text();
-
-                // Log untuk debugging
-                console.log('📦 Response received:', {
-                    length: html.length,
-                    firstChars: html.substring(0, 100),
-                    timestamp: new Date().toISOString()
-                });
-
-                const currentTbody = document.querySelector('tbody');
-
-                if (currentTbody) {
-                    // Normalize whitespace untuk comparison
-                    const normalizedNew = html.trim().replace(/\s+/g, ' ');
-                    const normalizedCurrent = currentTbody.innerHTML.trim().replace(/\s+/g, ' ');
-
-                    console.log('🔍 Comparing:', {
-                        newLength: normalizedNew.length,
-                        currentLength: normalizedCurrent.length,
-                        areDifferent: normalizedNew !== normalizedCurrent
-                    });
-
-                    // Selalu update jika ada perbedaan
-                    if (normalizedNew !== normalizedCurrent) {
-                        // Add fade effect
-                        currentTbody.style.transition = 'opacity 0.2s';
-                        currentTbody.style.opacity = '0.5';
-
-                        setTimeout(() => {
-                            currentTbody.innerHTML = html;
-                            currentTbody.style.opacity = '1';
-                            console.log('✅ Transactions updated - new data detected');
-                        }, 200);
-                    } else {
-                        console.log('⏭️ No changes detected');
-                    }
-                }
-
-                // Update last update time
-                lastUpdateTime = new Date();
-                updateLastUpdateText();
-
-            } catch (error) {
-                console.error('❌ Error updating transactions:', error);
-                // Show error indicator
-                const lastUpdateEl = document.getElementById('last-update');
-                if (lastUpdateEl) {
-                    lastUpdateEl.textContent = '⚠️ Update failed';
-                    lastUpdateEl.classList.add('text-red-500');
-                }
-            }
-        }
-
-        // Function to update the "last update" text
-        function updateLastUpdateText() {
-            const lastUpdateEl = document.getElementById('last-update');
-            if (lastUpdateTime && lastUpdateEl) {
-                lastUpdateEl.classList.remove('text-red-500');
-                const seconds = Math.floor((new Date() - lastUpdateTime) / 1000);
-                if (seconds < 60) {
-                    lastUpdateEl.textContent = `Updated ${seconds}s ago`;
-                } else {
-                    lastUpdateEl.textContent = `Updated ${Math.floor(seconds / 60)}m ago`;
-                }
-            }
-        }
-
-        // Poll for updates every 3 seconds
-        const pollInterval = setInterval(updateTransactions, 3000);
-
-        // Update the "ago" text every second
-        const textInterval = setInterval(updateLastUpdateText, 1000);
-
-        // Initial update
-        console.log('🚀 Starting real-time updates...');
-        updateTransactions();
-
-        // Listen for visibility change to pause/resume when tab is not active
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                console.log('👀 Tab active - fetching latest data');
-                updateTransactions();
-            }
-        });
-
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', () => {
-            clearInterval(pollInterval);
-            clearInterval(textInterval);
-        });
-    </script>
+    @livewireScripts
 </body>
 
 </html>
