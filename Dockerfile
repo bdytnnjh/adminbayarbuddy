@@ -138,30 +138,28 @@ COPY --chown=appuser:appuser composer.lock /app/composer.lock
 RUN mkdir -p /data/caddy /config/caddy && \
     chown -R appuser:appuser /data /config
 
-# Pindah ke user non-root sebelum menjalankan perintah aplikasi
-USER appuser
-
-# Optimisasi Laravel
+# Buat direktori storage dan cache SEBELUM switch user
 RUN mkdir -p \
         storage/framework/sessions \
         storage/framework/views \
         storage/framework/cache \
+        storage/framework/cache/data \
         storage/logs \
-        bootstrap/cache
-RUN php artisan cache:clear && \
-    php artisan config:cache && \
+        bootstrap/cache && \
+    chown -R appuser:appuser storage bootstrap/cache && \
+    chmod -R 775 storage bootstrap/cache
+
+# Pindah ke user non-root sebelum menjalankan perintah aplikasi
+USER appuser
+
+# Optimisasi Laravel
+RUN php artisan config:cache && \
     php artisan route:cache && \
     php artisan view:cache && \
     (php artisan storage:link || echo "Storage link already exists or failed, continuing...")
 
-# Pastikan izin direktori storage sudah benar
-RUN chmod -R 755 storage bootstrap/cache
-
 # Expose port untuk HTTP, HTTPS, dan HTTP/3
 EXPOSE 80 443 443/udp
-
-# Jalankan container sebagai user non-root
-USER appuser
 
 # Perintah untuk menjalankan aplikasi menggunakan FrankenPHP dan Caddyfile kustom
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]

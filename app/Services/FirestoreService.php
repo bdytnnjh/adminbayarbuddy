@@ -13,15 +13,38 @@ class FirestoreService
     public function __construct()
     {
         try {
-            $keyPath = storage_path('app/firebase_credentials.json');
+            $jsonKey = null;
 
-            if (!file_exists($keyPath)) {
-                \Log::error("File kredensial Firebase tidak ditemukan di: " . $keyPath);
-                $this->credentials = null;
-                return;
+            // Option 1: Try to load from base64 encoded environment variable (recommended for production)
+            $base64Credentials = env('FIREBASE_CREDENTIALS_BASE64');
+            if ($base64Credentials) {
+                $decoded = base64_decode($base64Credentials);
+                if ($decoded) {
+                    $jsonKey = json_decode($decoded, true);
+                    \Log::info('Firebase credentials loaded from FIREBASE_CREDENTIALS_BASE64 env variable');
+                }
             }
 
-            $jsonKey = json_decode(file_get_contents($keyPath), true);
+            // Option 2: Try to load from JSON string environment variable
+            if (!$jsonKey) {
+                $jsonCredentials = env('FIREBASE_CREDENTIALS_JSON');
+                if ($jsonCredentials) {
+                    $jsonKey = json_decode($jsonCredentials, true);
+                    \Log::info('Firebase credentials loaded from FIREBASE_CREDENTIALS_JSON env variable');
+                }
+            }
+
+            // Option 3: Fallback to file path
+            if (!$jsonKey) {
+                $keyPath = storage_path('app/firebase_credentials.json');
+                if (file_exists($keyPath)) {
+                    $jsonKey = json_decode(file_get_contents($keyPath), true);
+                    \Log::info('Firebase credentials loaded from file: ' . $keyPath);
+                } else {
+                    \Log::error("File kredensial Firebase tidak ditemukan di: " . $keyPath);
+                }
+            }
+
             if (!is_array($jsonKey) || ($jsonKey['type'] ?? null) !== 'service_account') {
                 \Log::error('Konfigurasi kredensial Firebase tidak valid atau bukan service_account.');
                 $this->credentials = null;
