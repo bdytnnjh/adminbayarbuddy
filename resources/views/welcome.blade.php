@@ -141,10 +141,10 @@
                         <!-- User Profile -->
                         <div class="flex items-center gap-3">
                             <div class="text-right">
-                                <p class="text-sm font-semibold text-gray-800">Sushant Nikam</p>
-                                <p class="text-xs text-gray-500">nikamasushant4@gmail.com</p>
+                                <p class="text-sm font-semibold text-gray-800">Admin</p>
+                                <p class="text-xs text-gray-500">admin@example.com</p>
                             </div>
-                            <img src="https://ui-avatars.com/api/?name=Sushant+Nikam&background=7c3aed&color=fff"
+                            <img src="https://ui-avatars.com/api/?name=Admin&background=7c3aed&color=fff"
                                 alt="User" class="w-10 h-10 rounded-full">
                         </div>
 
